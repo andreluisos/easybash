@@ -2,10 +2,9 @@
 A Python shell command helper using the subprocess Popen.
 """
 
-from shlex import split, join
+from shlex import split as shsplit, join as shjoin
 from subprocess import Popen, STDOUT, PIPE
-from time import sleep
-from typing import Union
+from time import sleep, time
 
 
 class Basher:
@@ -15,8 +14,7 @@ class Basher:
 
     def __init__(
         self,
-        cmd: Union[str, list[str]],
-        *pipes,
+        cmd: str,
         cwd=None,
         msg=None,
         debug=False,
@@ -24,14 +22,15 @@ class Basher:
         quiet=False,
         wait=True
     ) -> None:
-        self.cmd = self.cmd_sanitizer(cmd)
-        self.pipes = self.pipes_sanitizer(pipes)
+        self.wait = wait
+        if self.wait:
+            self.timer_start = time()
+        self.cmd, self.pipes = self.cmd_sanitizer(cmd)
         self.cwd = cwd
         self.quiet = quiet
         self.message = msg
         self.debug = debug
         self.shell = shell
-        self.wait = wait
         self.delay = 0.2
         self.yellow = "\033[93m"
         self.green = "\033[92m\033[1m"
@@ -44,37 +43,47 @@ class Basher:
             self.return_code = self.result.returncode
             self.return_bool = bool(self.return_code)
             self.stdout, self.stderr = self.descriptor()
+            self.timer_end = time()
             if self.debug:
+                print(f'Command ran: {self.cmd_to_str()}')
+                print(f'Return code: {self.return_code}')
                 print(
-                    f'{join(self.cmd)}{" | " + " | ".join([" ".join(pipe) for pipe in self.pipes]) if self.pipes else ""}\n')
-                if self.stdout and not self.stderr:
-                    print(f'{self.stdout}\n')
-                else:
-                    print(f'{self.stderr}\n')
+                    f'Execution time (s): {self.timer_end - self.timer_start}')
+                if self.stdout:
+                    print('-----STDOUT-----')
+                    print(self.stdout)
+                    print('----------------')
+                if self.stderr:
+                    print('-----STDERR-----')
+                    print(self.stderr)
+                    print('----------------')
+        else:
+            if self.debug:
+                print(f'Command ran: {self.cmd_to_str()}')
+                print(f'PID: {self.pid}')
 
-    def cmd_sanitizer(self, cmd: Union[str, list[str]]) -> list[str]:
+    def cmd_to_str(self) -> str:
+        """
+        1. Join the command with spaces.
+        """
+        cmd = f'{shjoin(self.cmd)}'
+        pipes = f'{" | " + " | ".join([" ".join(pipe) for pipe in self.pipes]) if self.pipes else ""}'
+        return cmd + pipes
+
+    def cmd_sanitizer(self, cmd: str) -> tuple[list[str], list[list[str]] | None]:
         """
         1. If the input is not a list, then try to split it.
         2. If the input is a list, then do nothing.
         """
-        if (type(cmd) not in [str, list]):
+        if not isinstance(cmd, str):
             raise ValueError(
-                f'Incorrect type for cmd: {type(cmd)}. Must be str or list.')
+                f'Incorrect type for cmd: {type(cmd)}. Must be str.')
 
-        if not isinstance(cmd, list):
-            try:
-                cmd = split(cmd)
-            except ValueError:
-                print(f'Incorrect string to split: {cmd}')
-        return list(cmd)
-
-    def pipes_sanitizer(self, pipes: tuple) -> tuple:
-        """
-        1. First, create a list of sanitized pipes.
-        2. Then, iterate over the pipes and sanitize each one.
-        3. Finally, return the sanitized pipes.
-        """
-        return tuple(self.cmd_sanitizer(pipe) for pipe in pipes)
+        if '|' in cmd:
+            cmd_split = cmd.split('|')
+            cmd_split = [shsplit(cmd) for cmd in cmd_split]
+            return (cmd_split[0], cmd_split[1:])
+        return (shsplit(cmd), None)
 
     def main_command(self) -> Popen:
         """
@@ -167,3 +176,6 @@ class Basher:
         if descriptor[1]:
             stderr = descriptor[1].decode("UTF-8").strip()
         return (stdout, stderr)
+
+
+Basher('ls | wc -l', wait=False, debug=True)
