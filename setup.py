@@ -8,7 +8,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='easybash',
-    version='1.0.0',
+    version='1.0.1',
     author='André Luís',
     author_email='andreluisos@me.com',
     description='A Python shell command helper using the subprocess Popen.',
