@@ -3,8 +3,9 @@ A Python shell command helper using the subprocess Popen.
 """
 
 from shlex import split as shsplit, join as shjoin
-from subprocess import Popen, STDOUT, PIPE
+from subprocess import Popen, PIPE
 from time import sleep, time
+from threading import Thread
 
 
 class Basher:
@@ -20,13 +21,15 @@ class Basher:
         debug=False,
         shell=False,
         quiet=False,
-        wait=True
+        wait=True,
+        decode=True
     ) -> None:
         self.wait = wait
         if self.wait:
             self.timer_start = time()
         self.cmd, self.pipes = self.cmd_sanitizer(cmd)
         self.cwd = cwd
+        self.decode = decode
         self.quiet = quiet
         self.message = msg
         self.debug = debug
@@ -36,29 +39,42 @@ class Basher:
         self.green = "\033[92m\033[1m"
         self.red = "\033[91m\033[1m"
         self.reset = "\033[0m"
+        self.stderr = ''
+        self.stdout = ''
         self.result = self.execute_command()
+        self.output = []
+        self.output_reader = Thread(
+            target=self.output.extend, args=(self.result.stdout,))
+        self.output_reader.daemon = True
+        self.output_reader.start()
         self.pid = self.result.pid
+        self.return_code = False
+        self.return_bool = False
         if self.wait:
             self.execution_stdout(self.result)
             self.return_code = self.result.returncode
             self.return_bool = bool(self.return_code)
-            self.stdout, self.stderr = self.descriptor()
-            self.timer_end = time()
-            if self.debug:
+            self.descriptor()
+        self.print_debug()
+
+    def print_debug(self):
+        """Prints the debugging output."""
+        self.timer_end = time()
+        if self.debug:
+            if self.wait:
                 print(f'Command ran: {self.cmd_to_str()}')
                 print(f'Return code: {self.return_code}')
                 print(
                     f'Execution time (s): {self.timer_end - self.timer_start}')
-                if self.stdout:
+                if self.return_bool:
                     print('-----STDOUT-----')
                     print(self.stdout)
                     print('----------------')
-                if self.stderr:
+                if not self.return_bool:
                     print('-----STDERR-----')
                     print(self.stderr)
                     print('----------------')
-        else:
-            if self.debug:
+            else:
                 print(f'Command ran: {self.cmd_to_str()}')
                 print(f'PID: {self.pid}')
 
@@ -78,7 +94,7 @@ class Basher:
         if '>' in cmd:
             raise ValueError(
                 f'Incorrect type for cmd: {type(cmd)}. Redirections are not yet supported.')
-                
+
         if not isinstance(cmd, str):
             raise ValueError(
                 f'Incorrect type for cmd: {type(cmd)}. Must be str.')
@@ -103,7 +119,7 @@ class Basher:
             cwd=self.cwd,
             stdin=PIPE,
             stdout=PIPE,
-            stderr=STDOUT,
+            stderr=PIPE,
             shell=self.shell,
         )
 
@@ -119,7 +135,7 @@ class Basher:
             pipe,
             stdin=previous.stdout,
             stdout=PIPE,
-            stderr=STDOUT,
+            stderr=PIPE,
             shell=self.shell,
         )
 
@@ -158,25 +174,30 @@ class Basher:
             return pipe_command  # type: ignore
         return self.main_command()
 
-    def descriptor(self) -> tuple:
+    def descriptor(self) -> None:
         """
         1. The execution_stdout() function is used to get the output of the command.
         2. The .decode("UTF-8") is used to decode the output of the command.
         3. The .strip() is used to remove the extra spaces from the output.
         """
+        self.result.wait()
+        self.output_reader.join()
+        self.drained_data = b''.join(self.output)
         if self.return_code == 0:
             self.return_bool = True
             if self.message is not None:
-                print(f'[{self.green}OK{self.reset}] {self.message}\n')
+                print(f'[{self.green}OK{self.reset}] {self.message}')
+            self.stderr = None
+            if self.decode:
+                self.stdout = str(self.drained_data, 'utf-8').strip()
+            else:
+                self.stdout = self.drained_data
         else:
             self.return_bool = False
             if self.message is not None:
-                print(f'[{self.red}--{self.reset}] {self.message}\n')
-
-        descriptor = self.result.communicate()
-        stdout, stderr = None, None
-        if descriptor[0]:
-            stdout = descriptor[0].decode("UTF-8").strip()
-        if descriptor[1]:
-            stderr = descriptor[1].decode("UTF-8").strip()
-        return (stdout, stderr)
+                print(f'[{self.red}--{self.reset}] {self.message}')
+            self.stdout = None
+            if self.decode:
+                self.stderr = str(self.drained_data, 'utf-8').strip()
+            else:
+                self.stderr = self.drained_data
